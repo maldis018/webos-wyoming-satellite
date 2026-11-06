@@ -4,10 +4,13 @@
  *
  *   const luna = createLuna({ lunaSend: '/usr/bin/luna-send' });
  *   luna.call('com.webos.service.tvpower/power/getPowerState', {}, (err, reply) => {});
+ *   luna.call(uri, payload, cb, { name: 'com.example.helloworld' });   // sent under that service name (-m)
  *
  * luna-send runs through execFile, so its reply comes back on a pipe. `err` is set when
  * luna-send fails, times out, or answers returnValue false (the reply is still passed along).
- * A busy queue delays later calls; the queue is per createLuna() instance.
+ * A busy queue delays later calls; the queue is per createLuna() instance. Calls with a `name` register that
+ * service name for their duration, and only one process can hold a name, so the queue running one call at a time is
+ * what lets several calls share a name.
  */
 const { execFile } = require('child_process');
 
@@ -22,7 +25,8 @@ function createLuna(opts = {}) {
     if (busy || !queue.length) return;
     busy = true;
     const job = queue.shift();
-    execFile(lunaSend, ['-n', '1', '-w', '3000', 'luna://' + job.uri, JSON.stringify(job.payload || {})],
+    const as = job.opts && job.opts.name ? ['-m', job.opts.name] : [];
+    execFile(lunaSend, ['-n', '1', '-w', '3000'].concat(as, ['luna://' + job.uri, JSON.stringify(job.payload || {})]),
       { timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => {
         busy = false;
         let reply = null;
@@ -37,8 +41,8 @@ function createLuna(opts = {}) {
 
   return {
     lunaSend,
-    call(uri, payload, cb) {
-      queue.push({ uri, payload, cb });
+    call(uri, payload, cb, opts) {
+      queue.push({ uri, payload, cb, opts });
       next();
     },
   };

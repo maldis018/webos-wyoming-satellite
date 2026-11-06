@@ -40,10 +40,19 @@ async function main() {
     process.stdout.write('config ok: ' + configPath + '\n');
     return 0;
   }
-  const svc = await startService({ configPath });
-  const stop = () => svc.stop().then(() => process.exit(0), () => process.exit(1));
+  // The handlers go in before the service starts: it logs "listening" before startService resolves, and a SIGTERM in
+  // between would otherwise kill the process without stopping the microphone.
+  let svc = null;
+  let stopping = false;
+  const stop = () => {
+    stopping = true;
+    if (!svc) return;   // still starting: stopped as soon as it is up
+    svc.stop().then(() => process.exit(0), () => process.exit(1));
+  };
   process.once('SIGTERM', stop);
   process.once('SIGINT', stop);
+  svc = await startService({ configPath });
+  if (stopping) stop();
   return null;   // keep running
 }
 

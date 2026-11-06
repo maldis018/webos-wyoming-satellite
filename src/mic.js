@@ -18,7 +18,13 @@
  * channel is taken, with a fixed gain. With `source: 'remote'` the stream is
  * `startStreaming {"deviceId":"remote1","deviceType":"remote","keyType":"thinQtv","subscribe":true}`: one channel at
  * 16 kHz S16 LE, and starting it switches the remote's microphone on (its LED lights) without a key held. The remote is
- * listed by getDevices only while it is connected. `restartTimer` and `stopStreaming` take `{ id }`. Nothing leaves the tv here; audio only goes to followers.
+ * listed by getDevices only while it is connected. `restartTimer` and `stopStreaming` take `{ id }`.
+ *
+ * OWNER: voiceinput keeps the sender's service name with a stream and refuses restartTimer and stopStreaming from any
+ * other name ("permission fail"). Every luna-send has a name of its own, so for the remote every call goes out under one
+ * fixed name (`busName`, `luna-send -m`) and none is a subscription: a subscribed call would hold the name for as long
+ * as it runs. The stream then lives on in voiceinput by itself; its end shows as the socket closing. The name must be
+ * one the bus lets luna-send take with access to voiceinput (see the README). Nothing leaves the tv here; audio only goes to followers.
  *
  * ON while the power state is Active, Screen Off or Screen Saver. OFF in Active Standby,
  * Suspend, or when unreadable: the tv is never woken for the microphone; this only reads the
@@ -59,6 +65,7 @@ class Mic {
     this.frame = this.channels * 2;
     this.deviceId = this.source === 'remote' ? null : 'internal1';   // the remote's id comes from getDevices
     this.waitLogged = false;
+    this.busName = opts.busName || 'com.example.helloworld';
     this.configure(opts);
     this.started = false;
     this.timer = null;
@@ -169,7 +176,13 @@ class Mic {
     });
   }
 
+  // A voiceinput call; for the remote under the fixed name that owns its stream.
+  voice(method, payload, cb) {
+    this.luna.call(VOICE + method, payload, cb || (() => {}), this.source === 'remote' ? { name: this.busName } : undefined);
+  }
+
   open(output) {
+    if (this.source === 'remote') return this.openRemote(output);
     const stream = { proc: null, sock: null, output };
     this.stream = stream;
     this.rest = Buffer.alloc(0);
@@ -183,17 +196,7 @@ class Mic {
     const json = new JsonStream((j) => {
       if (this.stream !== stream) return;
       if (j.socketPath && !stream.sock) {
-        stream.sock = net.connect(j.socketPath, () => {
-          if (this.stream !== stream) return;
-          this.on = true; this.output = output; this.since = new Date().toISOString();
-          stream.keepAlive = this.keepAliveMs
-            ? setInterval(() => this.luna.call(VOICE + 'restartTimer', { id: this.deviceId }, () => {}), this.keepAliveMs) : null;
-          this.log('mic: stream on (' + this.deviceId + ', output ' + output + ', channel ' + this.channel + ', ' + this.gainDb + ' dB)');
-          this.changed();
-        });
-        stream.sock.on('data', (b) => { if (this.stream === stream) this.ingest(b); });
-        stream.sock.on('error', () => {});
-        stream.sock.on('close', () => this.died(stream, 'socket closed'));
+        this.connect(stream, j.socketPath);
       } else if (j.returnValue === false) {
         this.died(stream, 'startStreaming: ' + (j.errorText || 'returnValue false'));
       }
@@ -201,6 +204,37 @@ class Mic {
     stream.proc.stdout.on('data', (d) => json.push(String(d)));
     stream.proc.on('error', (e) => this.died(stream, 'luna-send: ' + e.message));
     stream.proc.on('exit', () => this.died(stream, 'luna-send ended'));
+  }
+
+  // The remote: one named, unsubscribed startStreaming; the stream then runs in voiceinput until stopStreaming.
+  openRemote(output) {
+    const stream = { proc: null, sock: null, output };
+    this.stream = stream;
+    this.rest = Buffer.alloc(0);
+    this.voice('startStreaming', { deviceId: this.deviceId, deviceType: 'remote', keyType: 'thinQtv' }, (err, r) => {
+      if (this.stream !== stream) return;   // closed meanwhile: its stopStreaming is queued behind this call
+      if (r && r.socketPath) return this.connect(stream, r.socketPath);
+      // A stream of ours left over (a crash, a restart) is stopped, so the next poll can start afresh.
+      if (r && String(r.errorCode) === '2003') this.voice('stopStreaming', { id: this.deviceId });
+      this.died(stream, 'startStreaming: ' + (err ? err.message : 'no socket path'));
+    });
+  }
+
+  connect(stream, socketPath) {
+    const output = stream.output;
+    stream.sock = net.connect(socketPath, () => {
+      if (this.stream !== stream) return;
+      this.on = true; this.output = output; this.since = new Date().toISOString();
+      stream.keepAlive = this.keepAliveMs
+        ? setInterval(() => this.voice('restartTimer', { id: this.deviceId }, (err) => {
+          if (err && this.stream === stream) this.log('mic: restartTimer: ' + err.message);
+        }), this.keepAliveMs) : null;
+      this.log('mic: stream on (' + this.deviceId + ', output ' + output + ', channel ' + this.channel + ', ' + this.gainDb + ' dB)');
+      this.changed();
+    });
+    stream.sock.on('data', (b) => { if (this.stream === stream) this.ingest(b); });
+    stream.sock.on('error', () => {});
+    stream.sock.on('close', () => this.died(stream, 'socket closed'));
   }
 
   // The stream went away by itself: tidy up; the next poll starts it again after a pause.
@@ -249,10 +283,11 @@ class Mic {
     this.busy = true;
     if (stream.keepAlive) clearInterval(stream.keepAlive);
     try { if (stream.sock) stream.sock.destroy(); } catch (e) { /* gone */ }
-    try { stream.proc.kill(); } catch (e) { /* gone */ }
+    try { if (stream.proc) stream.proc.kill(); } catch (e) { /* gone */ }
     this.clear();
     if (this.on) { this.on = false; this.changed(); }
-    this.luna.call(VOICE + 'stopStreaming', { id: this.deviceId }, () => {
+    this.voice('stopStreaming', { id: this.deviceId }, (err) => {
+      if (err && this.source === 'remote' && !/already stopped/.test(err.message)) this.log('mic: stopStreaming: ' + err.message);
       this.busy = false;
       cb();
     });

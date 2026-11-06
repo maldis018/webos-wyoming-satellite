@@ -32,7 +32,7 @@ class ConfigError extends Error {
 const LOG_LEVELS = ['info', 'warn', 'error'];
 const ADVANCED_NUMBERS = ['holdMs', 'maxRunSeconds', 'warmUpMaxSeconds', 'answerTimeoutSeconds', 'maxQueueSeconds', 'playLeadMs',
   'micPollMs', 'micRestartMs', 'micKeepAliveMs', 'chunkBytes', 'wakeSoundMaxDelayMs', 'duckPollMs', 'duckAfterMs', 'duckWaitMs', 'duckMinMs'];
-const ADVANCED_STRINGS = ['pacat', 'lunaSend', 'sink'];
+const ADVANCED_STRINGS = ['pacat', 'lunaSend', 'sink', 'voiceBusName'];
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 function parseConfig(raw, o = {}) {

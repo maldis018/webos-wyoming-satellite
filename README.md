@@ -126,9 +126,15 @@ TVs without a microphone in the set (for example the 2020 CX) can use the Magic 
 - To stop the TV's own voice assistant answering the same key, keep the key from LG's key filters, for example with
   Glasshouse's remote key settings (set the Microphone key to Home Assistant).
 
-Known limit: `voiceinput` lets only the client that started a stream stop it or keep it alive, and each `luna-send` is
-a new client, so the remote's microphone stays on until the TV's own timeout (about 10 s after the press; no audio is
-sent once the run has ended), a press within that time is refused, and a command longer than about 10 s is cut off.
+The stream's owner: `voiceinput` keeps the sender's service name with a stream and refuses `restartTimer` and
+`stopStreaming` from any other name (`4000 permission fail`), and every plain `luna-send` has a name of its own. So the
+remote's calls all go out under one fixed name (`luna-send -m`), and none of them is a subscription, which would hold
+the name while it runs; the end of the stream shows as its socket closing. `luna-send` may take any name, but the bus
+only lets a name call `voiceinput` when a client permission file grants it, so the default is
+`com.example.helloworld`, a sample name that the webOS 5 permission files grant voiceinput's private API and that
+nothing registers. Set another with `"advanced": { "voiceBusName": "..." }`. Without this, the remote's microphone
+stayed on until the TV's own timeout (about 10 s), a press within that time was refused, and a command longer than
+about 10 s was cut off.
 
 ### Answers as toasts
 

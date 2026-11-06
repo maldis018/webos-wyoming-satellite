@@ -12,6 +12,13 @@
  * deleteSystemSettings clears the global and every per-app value, as the real service does.
  * State keys: power, output, stopGen (bumped by stopStreaming), die (running streams exit),
  * timeoutMs (a stream ends this long after start / the last restartTimer), lastRestart.
+ *
+ * The Magic Remote (state `remote: true`): getDevices lists `remote1`. Its stream is the real one's shape: a
+ * `startStreaming {deviceId:'remote1', deviceType:'remote'}` without subscribe answers the socket path and exits, while a
+ * detached child keeps the stream (1 channel, constantly 1000) running, as voiceinput does. The stream belongs to the
+ * caller's service name (`-m`, else a name of its own per process): restartTimer and stopStreaming from any other name
+ * fail with `4000 permission fail`, and another start while it runs fails with `2003 audio data is already capturing`.
+ * State keys: remoteOwner (while it runs), remoteStops (stops that went through).
  */
 const fs = require('node:fs');
 const os = require('node:os');
@@ -38,19 +45,52 @@ const fs = require('fs'), net = require('net');
 const dir = ${JSON.stringify(dir)};
 const read = () => JSON.parse(fs.readFileSync(dir + '/state.json', 'utf8'));
 const write = (n) => { const f = dir + '/state.json'; fs.writeFileSync(f + '.t' + process.pid, JSON.stringify(n)); fs.renameSync(f + '.t' + process.pid, f); };
+if (process.argv[2] === '--serve-remote') return serveRemote(process.argv[3]);
 const uri = process.argv[process.argv.length - 2].replace('luna://', '');
 const payload = JSON.parse(process.argv[process.argv.length - 1]);
-fs.appendFileSync(dir + '/log.jsonl', JSON.stringify({ uri, payload, t: Date.now() }) + '\\n');
+const mi = process.argv.indexOf('-m');
+const caller = mi > 0 ? process.argv[mi + 1] : 'luna-send-' + process.pid;
+fs.appendFileSync(dir + '/log.jsonl', JSON.stringify({ uri, payload, name: mi > 0 ? caller : null, t: Date.now() }) + '\\n');
 const out = (o) => console.log(JSON.stringify(o));
 const devices = (s) => [{ deviceType: 'internal', id: 'internal1', deviceName: 'preprocessed' },
-  s.output === 'external_arc' ? { deviceType: 'sound', id: 'sound2', deviceName: 'mixExt' } : { deviceType: 'sound', id: 'sound1', deviceName: 'mixInt' }];
+  s.output === 'external_arc' ? { deviceType: 'sound', id: 'sound2', deviceName: 'mixExt' } : { deviceType: 'sound', id: 'sound1', deviceName: 'mixInt' }]
+  .concat(s.remote ? [{ deviceType: 'remote', id: 'remote1', deviceName: 'LGEMR20', key: '00:00:00:00:00:01' }] : []);
+// The detached voiceinput side of a remote stream: serves the socket, 1 channel at 16 kHz, until stopped or timed out.
+function serveRemote(sock) {
+  const t0 = Date.now(), clients = [];
+  const frame = Buffer.alloc(640);
+  for (let i = 0; i < 320; i++) frame.writeInt16LE(1000, i * 2);
+  const end = () => { const n = read(); delete n.remoteOwner; write(n); clients.forEach((c) => c.destroy()); try { fs.unlinkSync(sock); } catch (e) {} process.exit(0); };
+  try { fs.unlinkSync(sock); } catch (e) {}
+  net.createServer((c) => clients.push(c)).listen(sock, () => process.stdout.write('ready\\n'));
+  setInterval(() => {
+    clients.forEach((c) => c.write(frame));
+    const n = read();
+    if (!n.remoteOwner || n.die || (n.timeoutMs && Date.now() - Math.max(t0, n.lastRestart || 0) > n.timeoutMs)) end();
+  }, 20);
+}
 const s = read();
 if (uri.endsWith('getPowerState')) out({ returnValue: true, state: s.power });
 else if (uri.endsWith('master/getVolume')) out({ returnValue: true, volumeStatus: { soundOutput: s.output, volume: 5 } });
 else if (uri.endsWith('voiceinput/getDevices')) {
+  if (!payload.subscribe) { out({ returnValue: true, devices: devices(s) }); process.exit(0); }
   let last = JSON.stringify(devices(s));
   out({ subscribed: true, returnValue: true, devices: devices(s) });
   setInterval(() => { const d = JSON.stringify(devices(read())); if (d !== last) { last = d; out({ returnValue: true, devices: JSON.parse(d) }); } }, 50);
+} else if (uri.endsWith('voiceinput/startStreaming') && payload.deviceType === 'remote') {
+  if (!s.remote || payload.deviceId !== 'remote1') out({ errorCode: '2000', returnValue: false, errorText: 'fail to find voice device' });
+  else if (s.remoteOwner) out({ errorCode: '2003', returnValue: false, errorText: 'audio data is already capturing' });
+  else {
+    s.remoteOwner = caller; write(s);
+    const sock = dir + '/voiceinput_remote1.soc';
+    const child = require('child_process').spawn(process.execPath, [__filename, '--serve-remote', sock], { detached: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    child.stdout.once('data', () => { child.stdout.destroy(); child.unref(); out({ socketPath: sock, returnValue: true }); process.exit(0); });
+  }
+} else if ((uri.endsWith('voiceinput/restartTimer') || uri.endsWith('voiceinput/stopStreaming')) && payload.id === 'remote1') {
+  if (!s.remoteOwner) out({ errorCode: '2004', returnValue: false, errorText: 'audio data already stopped' });
+  else if (s.remoteOwner !== caller) out({ errorCode: '4000', returnValue: false, errorText: 'permission fail' });
+  else if (uri.endsWith('restartTimer')) { s.lastRestart = Date.now(); write(s); out({ returnValue: true }); }
+  else { delete s.remoteOwner; s.remoteStops = (s.remoteStops || 0) + 1; write(s); out({ returnValue: true }); }
 } else if (uri.endsWith('voiceinput/startStreaming')) {
   const t0 = Date.now(), gen = s.stopGen || 0, sock = dir + '/internal1.' + process.pid + '.soc';
   const clients = [];

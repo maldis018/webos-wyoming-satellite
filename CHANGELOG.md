@@ -8,6 +8,11 @@
 - `answers`: show answers as toasts and speak them always, never, or for questions and long replies (`auto`); events
   `answer` and `pipeline-error`, option `speakAnswer({ text, heard })`.
 - `deploy/deploy.sh`: deploy from a computer with a config kept outside the repository, and verify the TV against git.
+- The remote's voiceinput calls go out under one service name (`advanced.voiceBusName`, default
+  `com.example.helloworld`) and unsubscribed, because voiceinput only lets the name that started a stream stop it or
+  keep it alive. The remote's microphone now turns off when the run ends, a press right after works, and long commands
+  are kept alive.
+- Fix: a SIGTERM right after start could kill the service before its signal handlers were installed.
 - Fix: the boot script's `stop` left the node process running (it looked for the supervisor's children after killing
   it), so `restart` failed with the port in use.
 

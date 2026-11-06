@@ -58,6 +58,7 @@ class Satellite extends EventEmitter {
       luna: this.luna,
       log: (m) => this.log('info', m),
       source: opts.micSource,
+      busName: opts.voiceBusName,
       channel: opts.micChannel,
       gainDb: opts.micGainDb,
       bufferSeconds: opts.bufferSeconds,
