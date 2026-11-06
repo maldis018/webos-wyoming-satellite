@@ -425,3 +425,40 @@ test('micAwake reports the power state seen by the mic without reaching into the
   tv.setState({ power: 'Active Standby' });
   await until('asleep', () => sat.micAwake() === false);
 });
+
+test('speakAnswer false: the answer is announced with what was heard, nothing plays, played still goes to HA', async () => {
+  const seen = [];
+  const sat = await makeSat({ speakAnswer: (a) => { seen.push(a); return false; } });
+  const answers = [];
+  sat.on('answer', (a) => answers.push(a));
+  const c = await ha(sat);
+  await until('mic', () => sat.micStatus().on);
+  assert.equal(sat.startRun().started, true);
+  c.send('transcript', { text: 'turn off the office lamp' });
+  await until('run over', () => sat.names().includes('run-stop'));
+  c.send('synthesize', { text: 'Turned off the light' });
+  const tSend = Date.now();
+  sendAudio(c, pcm(22050, 1000, 6000));
+  await c.waitFor('played');
+  assert.ok(Date.now() - tSend < 500, 'played at once, not after the 1 s of audio');
+  assert.deepEqual(seen, [{ text: 'Turned off the light', heard: 'turn off the office lamp' }]);
+  assert.deepEqual(answers, [{ spoken: false, text: 'Turned off the light', heard: 'turn off the office lamp' }]);
+  assert.equal(sink.starts().length, 0, 'no pacat for a muted answer');
+  assert.equal(sat.event('played').e.kind, 'tts');
+});
+
+test('speakAnswer true: the answer plays as usual and is announced as spoken', async () => {
+  const sat = await makeSat({ speakAnswer: () => true });
+  const answers = [];
+  sat.on('answer', (a) => answers.push(a));
+  const c = await ha(sat);
+  await until('mic', () => sat.micStatus().on);
+  assert.equal(sat.startRun().started, true);
+  c.send('transcript', { text: 'what is the weather?' });
+  await until('run over', () => sat.names().includes('run-stop'));
+  c.send('synthesize', { text: 'Sunny' });
+  sendAudio(c, pcm(22050, 300, 6000));
+  await c.waitFor('played');
+  assert.equal(answers[0].spoken, true);
+  assert.ok(spans(sink.bytes()).length === 1, 'the answer played');
+});

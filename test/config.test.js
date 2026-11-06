@@ -30,7 +30,8 @@ test('the documented shape maps onto satellite options', () => {
   });
   assert.deepEqual(options, {
     port: 10701, host: '127.0.0.1', name: 'Bedroom TV', area: 'Bedroom', allowedHosts: ['192.0.2.10', '2001:db8::1'],
-    alwaysListen: false, micSource: 'internal', micChannel: 2, triggerKey: null, micGainDb: 6, bufferSeconds: 1,
+    alwaysListen: false, micSource: 'internal', micChannel: 2, triggerKey: null,
+    answerToast: false, answerSpeak: 'always', answerSpeakOver: 80, micGainDb: 6, bufferSeconds: 1,
     wakeSound: '/sounds/wake.wav', doneSound: null,
     duckLevel: 60, holdMs: 500, pacat: '/opt/pacat', lunaSend: '/opt/luna-send', sink: 'voice',
   });

@@ -10,6 +10,7 @@
  *   "alwaysListen": true,
  *   "mic": { "source": "internal", "channel": 0, "gainDb": 15, "bufferSeconds": 2 },   // source "remote": the Magic Remote
  *   "trigger": { "key": 428 },     // optional: push to talk on this remote key (428 = mic); needs alwaysListen false
+ *   "answers": { "toast": false, "speak": "always", "speakOver": 80 },   // speak "auto": questions and long replies
  *   "sounds": { "wake": null, "done": null },
  *   "duckLevel": null,
  *   "logLevel": "info",
@@ -64,7 +65,7 @@ function parseConfig(raw, o = {}) {
     return v;
   };
 
-  unknown(raw, ['port', 'host', 'name', 'area', 'allowedHosts', 'alwaysListen', 'mic', 'trigger', 'sounds', 'duckLevel', 'logLevel', 'advanced'], '');
+  unknown(raw, ['port', 'host', 'name', 'area', 'allowedHosts', 'alwaysListen', 'mic', 'trigger', 'answers', 'sounds', 'duckLevel', 'logLevel', 'advanced'], '');
   const options = {
     port: number(raw, 'port', '', 10700, 0, 65535, true),
     host: text(raw, 'host', '', '0.0.0.0'),
@@ -106,6 +107,21 @@ function parseConfig(raw, o = {}) {
     if (options.alwaysListen) bad('trigger', 'needs "alwaysListen": false (push to talk and a continuous stream exclude each other)');
     options.startMic = false;
   }
+  // What happens to the answer of a run: shown as a toast, spoken, or both. speak "auto" speaks a reply to a question
+  // and a long reply; a short reply to a command is only shown.
+  const answers = section('answers');
+  unknown(answers, ['toast', 'speak', 'speakOver'], 'answers.');
+  options.answerToast = false;
+  if (answers.toast !== undefined) {
+    if (typeof answers.toast !== 'boolean') bad('answers.toast', 'must be true or false');
+    else options.answerToast = answers.toast;
+  }
+  options.answerSpeak = 'always';
+  if (answers.speak !== undefined) {
+    if (!['always', 'never', 'auto'].includes(answers.speak)) bad('answers.speak', 'must be "always", "never" or "auto"');
+    else options.answerSpeak = answers.speak;
+  }
+  options.answerSpeakOver = number(answers, 'speakOver', 'answers.', 80, 0, 10000, true);
   options.micGainDb = number(mic, 'gainDb', 'mic.', 15, -20, 40, false);
   options.bufferSeconds = number(mic, 'bufferSeconds', 'mic.', 2, 0, 10, false);
 

@@ -2,6 +2,7 @@
 const { Satellite } = require('./satellite');
 const { loadConfig } = require('./config');
 const { pushToTalk } = require('./ptt');
+const { speakPolicy, showAnswers } = require('./answers');
 
 const RANK = { info: 0, warn: 1, error: 2 };
 
@@ -15,9 +16,11 @@ async function startService({ configPath, log = stderrLog } = {}) {
   const { options, logLevel } = loadConfig(configPath);
   const min = RANK[logLevel];
   const satellite = new Satellite(Object.assign({}, options, {
+    speakAnswer: speakPolicy(options.answerSpeak, options.answerSpeakOver),
     log: (level, message) => { if (RANK[level] >= min) log(level, message); },
   }));
   await satellite.start();
+  if (options.answerToast) showAnswers(satellite);
   const ptt = options.triggerKey ? pushToTalk(satellite, { code: options.triggerKey, log: satellite.log }) : null;
   return { satellite, config: options, stop: () => { if (ptt) ptt.stop(); return satellite.stop(); } };
 }

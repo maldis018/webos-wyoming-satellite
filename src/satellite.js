@@ -262,7 +262,7 @@ class Satellite extends EventEmitter {
       case 'transcript':
         if (this.listening && !this.pipeline) this.arm();
         this.emit('stt-stop', { text: d.text === undefined ? '' : d.text });
-        if (this.pipeline) this.pipeline.transcript = true;
+        if (this.pipeline) { this.pipeline.transcript = true; this.pipeline.heard = d.text === undefined ? '' : d.text; }
         this.endRun('transcript', { tell: false });
         this.arm();
         break;
@@ -276,6 +276,7 @@ class Satellite extends EventEmitter {
       case 'voice-started': this.emit('voice-start', d); break;
       case 'voice-stopped': this.emit('voice-stop', d); break;
       case 'error':
+        this.emit('pipeline-error', { text: d.text, code: d.code });
         this.endRun('error', { tell: false, error: { text: d.text, code: d.code } });
         this.disarm();
         if (this.listening) { this.playback.stopWarmUp(); this.resend(); }
@@ -406,7 +407,7 @@ class Satellite extends EventEmitter {
   // (Re)starts the wait for an answer: while a run streams or HA is working on a transcript, audio that
   // follows is the answer to it; if nothing comes in answerTimeoutSeconds the pipeline is given up.
   arm() {
-    if (!this.pipeline) this.pipeline = { transcript: false, text: null, voice: null, timer: null };
+    if (!this.pipeline) this.pipeline = { transcript: false, heard: null, text: null, voice: null, timer: null };
     clearTimeout(this.pipeline.timer);
     if (this.run) return;   // the run's own limit covers the streaming part
     const p = this.pipeline;
@@ -469,8 +470,20 @@ class Satellite extends EventEmitter {
     const p = this.pipeline;
     if (kind === 'announce' && cancelled) this.disarm();
     if (kind === 'tts') clearTimeout(p.timer);
+    // The answer to a run: `speakAnswer({ text, heard })` (an option) decides whether it is spoken; it is announced
+    // either way with the `answer` event, so the host can show it.
+    let silent = false;
+    if (kind === 'tts') {
+      const answer = { text: p.text || '', heard: p.heard || '' };
+      let speak = true;
+      if (typeof this.opts.speakAnswer === 'function') {
+        try { speak = this.opts.speakAnswer(answer) !== false; } catch (e) { speak = true; }
+      }
+      silent = !speak;
+      this.emit('answer', Object.assign({ spoken: speak }, answer));
+    }
     this.playback.beginRx(conn, kind, format, {
-      cancelled, event: kind === 'tts' ? { text: p.text, voice: p.voice } : {},
+      cancelled, silent, event: kind === 'tts' ? { text: p.text, voice: p.voice } : {},
     });
   }
 

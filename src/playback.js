@@ -193,9 +193,15 @@ class Playback {
 
   // ---- audio from Home Assistant ----
 
-  // kind: 'tts' | 'announce'; info.cancelled: this announce cancelled a running pipeline.
+  // kind: 'tts' | 'announce'; info.cancelled: this announce cancelled a running pipeline. info.silent: receive the
+  // audio but play none of it (the answer is shown instead of spoken); `played` still goes to HA at the end.
   beginRx(conn, kind, format, info = {}) {
     this.abortRx('replaced');
+    if (info.silent) {
+      this.rx = { conn, kind, format, conv: null, info, bytes: 0, aborted: false, silent: true };
+      this.host.emit(kind === 'tts' ? 'tts-start' : 'announce-start', Object.assign({}, info.event));
+      return this.rx;
+    }
     let conv;
     try { conv = new Converter(format); } catch (e) {
       this.log('warn', 'cannot play ' + kind + ' audio: ' + e.message);
@@ -230,6 +236,13 @@ class Playback {
     if (!rx) return;
     this.rx = null;
     if (rx.kind === 'tts') this.host.emit('tts-end', {});
+    if (rx.silent) {
+      this.host.sendPlayed(rx.conn);
+      this.host.emit('played', { kind: rx.kind, ok: true, silent: true });
+      if (rx.kind === 'announce') this.host.emit('announce-end', { ok: true });
+      after(rx, true);
+      return;
+    }
     this.player.release();
     this.player.mark((ok) => {
       if (rx.aborted) return;
@@ -246,7 +259,7 @@ class Playback {
     if (!rx) return;
     this.rx = null;
     rx.aborted = true;
-    this.player.release();
+    if (!rx.silent) this.player.release();
     this.log('info', 'incoming ' + rx.kind + ' audio abandoned: ' + reason);
   }
 

@@ -65,9 +65,15 @@ case "${1:-start}" in
   stop)
     if alive; then
       pid="$(cat "$PIDFILE")"
-      # the supervisor first, then its node child
+      # Find the children (node, or the sleep between restarts) before the supervisor goes: once it is gone
+      # they belong to init, and `pkill -P` would find nothing. BusyBox on webOS 5 may lack pkill -P anyway.
+      children=""
+      for s in /proc/[0-9]*/stat; do
+        set -- $(cat "$s" 2>/dev/null)
+        [ "$4" = "$pid" ] && children="$children $1"
+      done
       kill "$pid" 2>/dev/null
-      pkill -TERM -P "$pid" 2>/dev/null
+      for c in $children; do kill -TERM "$c" 2>/dev/null; done
       echo "stopped"
     else
       echo "not running"
