@@ -1,6 +1,7 @@
 'use strict';
 const { Satellite } = require('./satellite');
 const { loadConfig } = require('./config');
+const { pushToTalk } = require('./ptt');
 
 const RANK = { info: 0, warn: 1, error: 2 };
 
@@ -17,7 +18,8 @@ async function startService({ configPath, log = stderrLog } = {}) {
     log: (level, message) => { if (RANK[level] >= min) log(level, message); },
   }));
   await satellite.start();
-  return { satellite, config: options, stop: () => satellite.stop() };
+  const ptt = options.triggerKey ? pushToTalk(satellite, { code: options.triggerKey, log: satellite.log }) : null;
+  return { satellite, config: options, stop: () => { if (ptt) ptt.stop(); return satellite.stop(); } };
 }
 
 module.exports = { startService };

@@ -9,7 +9,7 @@ const { Player } = require('./player');
 const { Converter, SINK, wavToSink } = require('./pcm');
 const duck = require('./duck');
 const { AWAKE } = require('./power');
-const fs = require('node:fs');
+const fs = require('fs');
 
 function loadSound(what, src, log) {
   if (!src) return null;
@@ -20,6 +20,38 @@ function loadSound(what, src, log) {
     log('warn', what + ' not loaded: ' + e.message);
     return null;
   }
+}
+
+// Reads an async iterable (a stream on Node 10+, a generator) or, on Node 8, a readable stream: next() resolves the
+// next chunk or null at the end; close() ends the iteration early, as leaving a `for await` loop would.
+function chunkReader(source) {
+  const sym = typeof Symbol.asyncIterator === 'symbol' ? Symbol.asyncIterator : null;
+  if (sym && source && typeof source[sym] === 'function') {
+    const it = source[sym]();
+    let done = false;
+    return {
+      next: () => it.next().then((r) => { done = r.done; return r.done ? null : r.value; }),
+      close: () => (!done && typeof it.return === 'function' ? Promise.resolve(it.return()).then(() => {}) : Promise.resolve()),
+    };
+  }
+  return { next: () => nextChunk(source), close: () => Promise.resolve() };
+}
+
+// The next chunk of a readable stream, or null at its end. Stands in for `for await` on Node 8.
+function nextChunk(stream) {
+  return new Promise((resolve, reject) => {
+    const c = stream.read();
+    if (c !== null) return resolve(c);
+    const state = stream._readableState;
+    if (state && state.ended && !state.length) return resolve(null);
+    const done = () => { stream.removeListener('readable', onReadable); stream.removeListener('end', onEnd); stream.removeListener('error', onError); };
+    const onReadable = () => { done(); resolve(nextChunk(stream)); };
+    const onEnd = () => { done(); resolve(null); };
+    const onError = (e) => { done(); reject(e); };
+    stream.once('readable', onReadable);
+    stream.once('end', onEnd);
+    stream.once('error', onError);
+  });
 }
 
 class Playback {
@@ -247,11 +279,17 @@ class Playback {
       player.open();
       if (Buffer.isBuffer(stream)) player.enqueue(conv.push(stream), tag);
       else {
-        for await (const chunk of stream) {
-          if (aborted) break;
-          while (player.queuedMs > max && !aborted) await new Promise((r) => setTimeout(r, 50));
-          if (aborted) break;
-          player.enqueue(conv.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)), tag);
+        // Node 8 on webOS 5 cannot parse `for await` (Node 10+), so the iteration is written out.
+        const reader = chunkReader(stream);
+        try {
+          for (let chunk = await reader.next(); chunk !== null; chunk = await reader.next()) {
+            if (aborted) break;
+            while (player.queuedMs > max && !aborted) await new Promise((r) => setTimeout(r, 50));
+            if (aborted) break;
+            player.enqueue(conv.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)), tag);
+          }
+        } finally {
+          await reader.close();
         }
       }
     } finally {

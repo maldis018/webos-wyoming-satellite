@@ -1,6 +1,6 @@
 'use strict';
 /*
- * The tv's microphone (`internal1`) as a local stream with a pre-roll buffer.
+ * The tv's microphone (`internal1`) or the Magic Remote's (`source: 'remote'`) as a local stream with a pre-roll buffer.
  *
  *   const mic = new Mic({ luna, lunaSend, log, channel: 0, gainDb: 15, bufferSeconds: 2,
  *                         pollMs: 3000, restartMs: 5000, keepAliveMs: 4000, onChange(status) {} });
@@ -15,7 +15,10 @@
  *
  * `voiceinput/startStreaming {"id":"internal1","subscribe":true}` answers with the path of a
  * unix socket that delivers the preprocessed stream: raw PCM, 16 kHz, S16 LE, 5 channels. One
- * channel is taken, with a fixed gain. Nothing leaves the tv here; audio only goes to followers.
+ * channel is taken, with a fixed gain. With `source: 'remote'` the stream is
+ * `startStreaming {"deviceId":"remote1","deviceType":"remote","keyType":"thinQtv","subscribe":true}`: one channel at
+ * 16 kHz S16 LE, and starting it switches the remote's microphone on (its LED lights) without a key held. The remote is
+ * listed by getDevices only while it is connected. `restartTimer` and `stopStreaming` take `{ id }`. Nothing leaves the tv here; audio only goes to followers.
  *
  * ON while the power state is Active, Screen Off or Screen Saver. OFF in Active Standby,
  * Suspend, or when unreadable: the tv is never woken for the microphone; this only reads the
@@ -28,16 +31,16 @@
  * about 10 s ("voice stop", reason "timeout occurs"). Closing kills luna-send, destroys the
  * socket and calls stopStreaming.
  */
-const { spawn } = require('node:child_process');
-const net = require('node:net');
+const { spawn } = require('child_process');
+const net = require('net');
 const { JsonStream } = require('./luna');
 
 const { AWAKE } = require('./power');
 const VOICE = 'com.webos.service.voiceinput/';
 const POWER = 'com.webos.service.tvpower/power/getPowerState';
 const VOLUME = 'com.webos.service.audio/master/getVolume';
-const CHANNELS = 5;
-const FRAME = CHANNELS * 2;
+// The tv microphone (`internal1`) delivers 5 channels; the Magic Remote (`remote1`) delivers one.
+const CHANNELS = { internal: 5, remote: 1 };
 const BYTES_PER_S = 16000 * 2;
 
 function number(v, min, max, fallback) {
@@ -51,6 +54,11 @@ class Mic {
     this.luna = opts.luna;
     this.lunaSend = opts.lunaSend || this.luna.lunaSend;
     this.log = opts.log || (() => {});
+    this.source = opts.source === 'remote' ? 'remote' : 'internal';
+    this.channels = CHANNELS[this.source];
+    this.frame = this.channels * 2;
+    this.deviceId = this.source === 'remote' ? null : 'internal1';   // the remote's id comes from getDevices
+    this.waitLogged = false;
     this.configure(opts);
     this.started = false;
     this.timer = null;
@@ -71,11 +79,11 @@ class Mic {
   }
 
   configure(o) {
-    this.channel = Math.floor(number(o.channel, 0, CHANNELS - 1, this.channel === undefined ? 0 : this.channel));
+    this.channel = Math.floor(number(o.channel, 0, this.channels - 1, this.channel === undefined ? 0 : this.channel));
     this.gainDb = number(o.gainDb, -20, 40, this.gainDb === undefined ? 15 : this.gainDb);
     this.bufferSeconds = number(o.bufferSeconds, 0, 10, this.bufferSeconds === undefined ? 2 : this.bufferSeconds);
     this.factor = Math.pow(10, this.gainDb / 20);
-    this.pollMs = number(o.pollMs, 20, 60000, this.pollMs || 3000);
+    this.pollMs = number(o.pollMs, 20, 60000, this.pollMs || (this.source === 'remote' ? 250 : 3000));   // push to talk wants the remote stream quickly
     this.restartMs = number(o.restartMs, 20, 60000, this.restartMs || 5000);
     this.keepAliveMs = number(o.keepAliveMs, 0, 60000, this.keepAliveMs === undefined ? 4000 : this.keepAliveMs);
   }
@@ -135,9 +143,29 @@ class Mic {
         this.polling = false;
         const output = !errV && v && v.volumeStatus ? v.volumeStatus.soundOutput : null;
         if (!this.started || this.busy) return;
-        if (!this.stream) { if (Date.now() >= this.notBefore) this.open(output); return; }
+        if (!this.stream) { if (Date.now() >= this.notBefore) this.openWhenReady(output); return; }
         if (output && this.stream.output && output !== this.stream.output) this.restart('output ' + this.stream.output + ' -> ' + output);
       });
+    });
+  }
+
+  // The remote is a voice device only while it is connected (it drops out after ~45 s idle), so its id is
+  // looked up before each open; while it is missing, the next poll looks again.
+  openWhenReady(output) {
+    if (this.source !== 'remote') return this.open(output);
+    this.busy = true;
+    this.luna.call(VOICE + 'getDevices', {}, (err, r) => {
+      this.busy = false;
+      if (!this.started || this.stream) return;
+      const list = !err && r && Array.isArray(r.devices) ? r.devices : [];
+      const dev = list.filter((d) => d.deviceType === 'remote')[0];
+      if (!dev) {
+        if (!this.waitLogged) { this.log('mic: waiting for the remote to connect'); this.waitLogged = true; }
+        return;
+      }
+      this.waitLogged = false;
+      this.deviceId = dev.id;
+      this.open(output);
     });
   }
 
@@ -145,8 +173,12 @@ class Mic {
     const stream = { proc: null, sock: null, output };
     this.stream = stream;
     this.rest = Buffer.alloc(0);
-    this.followDevices();
-    stream.proc = spawn(this.lunaSend, ['-i', 'luna://' + VOICE + 'startStreaming', JSON.stringify({ id: 'internal1', subscribe: true })],
+    // sound1 <-> sound2 restarts concern the tv microphone only; for the remote a changing list would cut a command short.
+    if (this.source !== 'remote') this.followDevices();
+    const request = this.source === 'remote'
+      ? { deviceId: this.deviceId, deviceType: 'remote', keyType: 'thinQtv', subscribe: true }
+      : { id: 'internal1', subscribe: true };
+    stream.proc = spawn(this.lunaSend, ['-i', 'luna://' + VOICE + 'startStreaming', JSON.stringify(request)],
       { stdio: ['ignore', 'pipe', 'ignore'] });
     const json = new JsonStream((j) => {
       if (this.stream !== stream) return;
@@ -155,8 +187,8 @@ class Mic {
           if (this.stream !== stream) return;
           this.on = true; this.output = output; this.since = new Date().toISOString();
           stream.keepAlive = this.keepAliveMs
-            ? setInterval(() => this.luna.call(VOICE + 'restartTimer', { id: 'internal1' }, () => {}), this.keepAliveMs) : null;
-          this.log('mic: stream on (output ' + output + ', channel ' + this.channel + ', ' + this.gainDb + ' dB)');
+            ? setInterval(() => this.luna.call(VOICE + 'restartTimer', { id: this.deviceId }, () => {}), this.keepAliveMs) : null;
+          this.log('mic: stream on (' + this.deviceId + ', output ' + output + ', channel ' + this.channel + ', ' + this.gainDb + ' dB)');
           this.changed();
         });
         stream.sock.on('data', (b) => { if (this.stream === stream) this.ingest(b); });
@@ -220,7 +252,7 @@ class Mic {
     try { stream.proc.kill(); } catch (e) { /* gone */ }
     this.clear();
     if (this.on) { this.on = false; this.changed(); }
-    this.luna.call(VOICE + 'stopStreaming', { id: 'internal1' }, () => {
+    this.luna.call(VOICE + 'stopStreaming', { id: this.deviceId }, () => {
       this.busy = false;
       cb();
     });
@@ -229,6 +261,7 @@ class Mic {
   // Raw 5-channel frames in; one channel, with gain, to the buffer and the followers.
   ingest(b) {
     const data = this.rest.length ? Buffer.concat([this.rest, b]) : b;
+    const FRAME = this.frame;
     const frames = Math.floor(data.length / FRAME);
     const out = Buffer.alloc(frames * 2);
     for (let i = 0; i < frames; i++) {

@@ -12,7 +12,7 @@
  * - A read without app_id never finds the global value; a read for an app id that has no value of
  *   its own returns it. PROBE_APP is such an id.
  */
-const { spawn } = require('node:child_process');
+const { spawn } = require('child_process');
 const { JsonStream } = require('./luna');
 
 const SETTINGS = 'com.webos.settingsservice/';

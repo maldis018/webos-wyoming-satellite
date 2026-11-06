@@ -30,9 +30,22 @@ test('the documented shape maps onto satellite options', () => {
   });
   assert.deepEqual(options, {
     port: 10701, host: '127.0.0.1', name: 'Bedroom TV', area: 'Bedroom', allowedHosts: ['192.0.2.10', '2001:db8::1'],
-    alwaysListen: false, micChannel: 2, micGainDb: 6, bufferSeconds: 1, wakeSound: '/sounds/wake.wav', doneSound: null,
+    alwaysListen: false, micSource: 'internal', micChannel: 2, triggerKey: null, micGainDb: 6, bufferSeconds: 1,
+    wakeSound: '/sounds/wake.wav', doneSound: null,
     duckLevel: 60, holdMs: 500, pacat: '/opt/pacat', lunaSend: '/opt/luna-send', sink: 'voice',
   });
+});
+
+test('push to talk on the remote: mic.source remote, trigger key, mic closed until a press', () => {
+  const { options } = parseConfig({ alwaysListen: false, mic: { source: 'remote', gainDb: 0 }, trigger: { key: 428 } });
+  assert.equal(options.micSource, 'remote');
+  assert.equal(options.triggerKey, 428);
+  assert.equal(options.startMic, false);
+  assert.equal(options.micGainDb, 0);
+  assert.equal(parseConfig({ alwaysListen: false, trigger: {} }).options.triggerKey, 428);
+  const text = errors({ mic: { source: 'phone', channel: 0 }, trigger: { key: 428, hold: true } }).join('\n');
+  for (const needle of ['mic.source', 'trigger.hold', 'alwaysListen']) assert.ok(text.includes(needle), needle + ' not in:\n' + text);
+  assert.ok(errors({ alwaysListen: false, mic: { source: 'remote', channel: 1 } }).join().includes('mic.channel'), 'the remote has one channel');
 });
 
 test('every problem is reported at once, with the path of the setting', () => {

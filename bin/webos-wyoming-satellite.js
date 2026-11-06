@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 'use strict';
-const path = require('node:path');
+const path = require('path');
 const { startService } = require('../src/service');
 const { loadConfig, ConfigError } = require('../src/config');
 const pkg = require('../package.json');

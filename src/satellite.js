@@ -1,11 +1,16 @@
 'use strict';
-const net = require('node:net');
-const { EventEmitter } = require('node:events');
+const net = require('net');
+const { EventEmitter } = require('events');
 const { encode, Parser } = require('./wyoming');
 const { createLuna } = require('./luna');
 const { Mic } = require('./mic');
 const { Playback } = require('./playback');
 const pkg = require('../package.json');
+
+// Bytes queued for writing. `writableLength` is Node 9.4+; webOS 5 runs Node 8, which only has the internal state.
+function backlog(w) {
+  return w.writableLength !== undefined ? w.writableLength : (w._writableState ? w._writableState.length : 0);
+}
 
 const MIC_FORMAT = { rate: 16000, width: 2, channels: 1 };
 const MAX_QUEUED_BYTES = 4 * 1024 * 1024;
@@ -52,6 +57,7 @@ class Satellite extends EventEmitter {
     this.mic = new Mic({
       luna: this.luna,
       log: (m) => this.log('info', m),
+      source: opts.micSource,
       channel: opts.micChannel,
       gainDb: opts.micGainDb,
       bufferSeconds: opts.bufferSeconds,
@@ -304,7 +310,7 @@ class Satellite extends EventEmitter {
   info() {
     return {
       asr: [], tts: [], handle: [], intent: [], wake: [],
-      mic: [{ name: 'internal1', description: 'webOS TV microphone', attribution: { name: '', url: '' }, installed: true, version: null, mic_format: MIC_FORMAT }],
+      mic: [{ name: this.mic.deviceId || 'remote1', description: this.mic.source === 'remote' ? 'LG Magic Remote microphone' : 'webOS TV microphone', attribution: { name: '', url: '' }, installed: true, version: null, mic_format: MIC_FORMAT }],
       snd: [],
       satellite: {
         name: this.opts.name, description: 'webOS Wyoming satellite', attribution: { name: '', url: '' },
@@ -320,7 +326,7 @@ class Satellite extends EventEmitter {
     run.pending = run.pending.length ? Buffer.concat([run.pending, buf]) : buf;
     const size = this.opts.chunkBytes;
     while (run.pending.length >= size) this.chunk(run, run.pending.slice(0, size)), run.pending = run.pending.slice(size);
-    if (run.conn.sock.writableLength > MAX_QUEUED_BYTES) {
+    if (backlog(run.conn.sock) > MAX_QUEUED_BYTES) {
       if (run === this.listening) { this.endListening('backpressure', { tell: false }); this.relisten(2000); } else this.endRun('backpressure', { tell: false });
     }
   }

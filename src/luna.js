@@ -9,7 +9,7 @@
  * luna-send fails, times out, or answers returnValue false (the reply is still passed along).
  * A busy queue delays later calls; the queue is per createLuna() instance.
  */
-const { execFile } = require('node:child_process');
+const { execFile } = require('child_process');
 
 const DEFAULT_LUNA_SEND = '/usr/bin/luna-send';
 

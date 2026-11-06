@@ -8,16 +8,17 @@
  *   "port": 10700, "host": "0.0.0.0", "name": "webOS TV", "area": null,
  *   "allowedHosts": ["192.0.2.10"],
  *   "alwaysListen": true,
- *   "mic": { "channel": 0, "gainDb": 15, "bufferSeconds": 2 },
+ *   "mic": { "source": "internal", "channel": 0, "gainDb": 15, "bufferSeconds": 2 },   // source "remote": the Magic Remote
+ *   "trigger": { "key": 428 },     // optional: push to talk on this remote key (428 = mic); needs alwaysListen false
  *   "sounds": { "wake": null, "done": null },
  *   "duckLevel": null,
  *   "logLevel": "info",
  *   "advanced": { "holdMs": 350, "pacat": "/usr/bin/pacat", ... }
  * }
  */
-const fs = require('node:fs');
-const net = require('node:net');
-const path = require('node:path');
+const fs = require('fs');
+const net = require('net');
+const path = require('path');
 
 class ConfigError extends Error {
   constructor(problems, file) {
@@ -63,7 +64,7 @@ function parseConfig(raw, o = {}) {
     return v;
   };
 
-  unknown(raw, ['port', 'host', 'name', 'area', 'allowedHosts', 'alwaysListen', 'mic', 'sounds', 'duckLevel', 'logLevel', 'advanced'], '');
+  unknown(raw, ['port', 'host', 'name', 'area', 'allowedHosts', 'alwaysListen', 'mic', 'trigger', 'sounds', 'duckLevel', 'logLevel', 'advanced'], '');
   const options = {
     port: number(raw, 'port', '', 10700, 0, 65535, true),
     host: text(raw, 'host', '', '0.0.0.0'),
@@ -88,8 +89,23 @@ function parseConfig(raw, o = {}) {
   }
 
   const mic = section('mic');
-  unknown(mic, ['channel', 'gainDb', 'bufferSeconds'], 'mic.');
-  options.micChannel = number(mic, 'channel', 'mic.', 0, 0, 4, true);
+  unknown(mic, ['source', 'channel', 'gainDb', 'bufferSeconds'], 'mic.');
+  options.micSource = 'internal';
+  if (mic.source !== undefined) {
+    if (mic.source !== 'internal' && mic.source !== 'remote') bad('mic.source', 'must be "internal" or "remote"');
+    else options.micSource = mic.source;
+  }
+  options.micChannel = number(mic, 'channel', 'mic.', 0, 0, options.micSource === 'remote' ? 0 : 4, true);
+
+  // Push to talk: a remote key starts a run; the microphone is closed in between.
+  options.triggerKey = null;
+  if (raw.trigger !== undefined && raw.trigger !== null) {
+    const trigger = section('trigger');
+    unknown(trigger, ['key'], 'trigger.');
+    options.triggerKey = number(trigger, 'key', 'trigger.', 428, 1, 65535, true);
+    if (options.alwaysListen) bad('trigger', 'needs "alwaysListen": false (push to talk and a continuous stream exclude each other)');
+    options.startMic = false;
+  }
   options.micGainDb = number(mic, 'gainDb', 'mic.', 15, -20, 40, false);
   options.bufferSeconds = number(mic, 'bufferSeconds', 'mic.', 2, 0, 10, false);
 

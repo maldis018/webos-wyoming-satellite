@@ -17,8 +17,13 @@
  *
  * Input is raw s16le, mono, 44100 Hz (see pcm.js).
  */
-const { spawn } = require('node:child_process');
+const { spawn } = require('child_process');
 const { SINK } = require('./pcm');
+
+// Bytes queued for writing. `writableLength` is Node 9.4+; webOS 5 runs Node 8, which only has the internal state.
+function backlog(w) {
+  return w.writableLength !== undefined ? w.writableLength : (w._writableState ? w._writableState.length : 0);
+}
 
 const BYTES_PER_MS = SINK.rate * 2 / 1000;     // 88.2
 const STEP_MS = 10;
@@ -191,7 +196,7 @@ class Player {
     const writtenMs = () => this.written / BYTES_PER_MS;
     if (elapsed > writtenMs()) { this.t0 += elapsed - writtenMs(); elapsed = writtenMs(); }   // underrun
     while (this.proc === proc && writtenMs() - elapsed < this.leadMs) {
-      if (proc.stdin.writableLength > MAX_STDIN_BACKLOG) break;
+      if (backlog(proc.stdin) > MAX_STDIN_BACKLOG) break;
       const frame = this.nextFrame();
       this.written += frame.length;
       proc.stdin.write(frame);
