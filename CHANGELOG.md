@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Runs on Node 8.12 (webOS 5): no `node:` module prefixes, no `for await`, a fallback for `writableLength`.
+- `mic.source: "remote"`: the Magic Remote's microphone, for TVs without one in the set.
+- `trigger: { key }`: push to talk on a remote key (428, the mic key), with the microphone closed between presses.
+- `answers`: show answers as toasts and speak them always, never, or for questions and long replies (`auto`); events
+  `answer` and `pipeline-error`, option `speakAnswer({ text, heard })`.
+- `deploy/deploy.sh`: deploy from a computer with a config kept outside the repository, and verify the TV against git.
+- Fix: the boot script's `stop` left the node process running (it looked for the supervisor's children after killing
+  it), so `restart` failed with the port in use.
+
 ## 0.1.0
 
 - Standalone service: `bin/webos-wyoming-satellite.js` runs from one JSON configuration file (`--config`, `--check`), with

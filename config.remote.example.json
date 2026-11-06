@@ -1,0 +1,12 @@
+{
+  "port": 10700,
+  "name": "Living room TV",
+  "area": "Living room",
+  "allowedHosts": ["192.0.2.10"],
+  "alwaysListen": false,
+  "mic": { "source": "remote", "gainDb": 0, "bufferSeconds": 1 },
+  "trigger": { "key": 428 },
+  "answers": { "toast": true, "speak": "auto", "speakOver": 80 },
+  "duckLevel": null,
+  "logLevel": "info"
+}

@@ -15,6 +15,7 @@
     "src",
     "init",
     "config.example.json",
+    "config.remote.example.json",
     "LICENSE",
     "README.md",
     "CHANGELOG.md"

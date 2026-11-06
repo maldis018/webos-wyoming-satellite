@@ -10,14 +10,15 @@ Home Assistant, and playing answers and announcements on the TV with ducking of 
 ## Requirements
 
 - An LG webOS TV with root access (the library calls `luna-send` and reads the voice-input socket).
-- Node 20.12 or newer on the TV. No npm, no dependencies: Node built-ins only. The code is
-  CommonJS (`require`), so it also loads from a plain script on a TV without a package manager.
+- Node 8.12 or newer on the TV (webOS 5 ships 8.12; newer TVs ship 20+). No npm, no dependencies: Node
+  built-ins only. The code is CommonJS (`require`), so it also loads from a plain script on a TV without a package
+  manager. The tests need Node 20.12 or newer on the computer that runs them.
 - Home Assistant with the Wyoming integration (add the TV by host and port). For a wake word in
   Home Assistant, run openWakeWord there; this library does not detect wake words itself.
 
 ## Install the service on the TV
 
-You need a rooted LG webOS TV with SSH access. Node is already on the TV (check with `node --version`, 20.12 or newer);
+You need a rooted LG webOS TV with SSH access. Node is already on the TV (check with `node --version`, 8.12 or newer);
 there is no npm and no git on it, and the satellite needs neither.
 
 1. **Copy the files.** From a computer with this repository (or an unpacked release), copy `bin/`, `src/`,
@@ -110,6 +111,39 @@ Assistant, which runs the wake word:
 
 The audio stream is continuous while the TV is on and Home Assistant has the satellite unmuted. It goes to Home
 Assistant on your network only. The microphone is closed while the TV is off.
+
+### Push to talk on the Magic Remote
+
+TVs without a microphone in the set (for example the 2020 CX) can use the Magic Remote's instead. Start from
+`config.remote.example.json`:
+
+- `"mic": { "source": "remote" }` streams the remote's microphone (one channel, 16 kHz). The remote is a voice device
+  only while it is connected, so it is looked up at each press. Starting the stream switches the remote's microphone on
+  by itself; the key does not have to be held.
+- `"trigger": { "key": 428 }` starts a run when that key is pressed (428 is the mic key of the MR20GA remote), read
+  from `/dev/input/event*` without grabbing it, so the TV and other readers still see it. Needs `"alwaysListen": false`.
+  The microphone is open only from the press until Home Assistant has the transcript; a press during a run ends it.
+- To stop the TV's own voice assistant answering the same key, keep the key from LG's key filters, for example with
+  Glasshouse's remote key settings (set the Microphone key to Home Assistant).
+
+Known limit: `voiceinput` lets only the client that started a stream stop it or keep it alive, and each `luna-send` is
+a new client, so the remote's microphone stays on until the TV's own timeout (about 10 s after the press; no audio is
+sent once the run has ended), a press within that time is refused, and a command longer than about 10 s is cut off.
+
+### Answers as toasts
+
+`"answers": { "toast": true, "speak": "auto", "speakOver": 80 }` shows every answer (and a failed run) as a toast on the
+TV. `speak` decides whether it is also spoken: `always` (the default), `never`, or `auto`, which speaks the reply to a
+question (a question mark, or a sentence that opens like one) and any reply longer than `speakOver` characters, and only
+shows a short reply to a command such as "Turned off the light". A muted answer is not played, and `played` still goes
+to Home Assistant so the pipeline ends normally. Announcements are always spoken.
+
+### Deploy from a computer
+
+`TV_HOST=<tv> deploy/deploy.sh deploy <config.json>` copies the code and your config (kept wherever you like, outside
+the repository) over one SSH connection, validates it, installs the boot hook and restarts the service.
+`deploy/deploy.sh verify <config.json>` checks that every deployed file matches the working tree. `SSH_KEY_PUB` selects
+an agent-held key.
 
 ## Use as a library
 
