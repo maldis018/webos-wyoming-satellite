@@ -5,7 +5,7 @@
   "main": "src/index.js",
   "license": "MIT",
   "engines": {
-    "node": ">=20.12"
+    "node": ">=8.12"
   },
   "scripts": {
     "test": "node --test test/*.test.js"

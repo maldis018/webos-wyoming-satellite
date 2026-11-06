@@ -16,7 +16,7 @@
  * `voiceinput/startStreaming {"id":"internal1","subscribe":true}` answers with the path of a
  * unix socket that delivers the preprocessed stream: raw PCM, 16 kHz, S16 LE, 5 channels. One
  * channel is taken, with a fixed gain. With `source: 'remote'` the stream is
- * `startStreaming {"deviceId":"remote1","deviceType":"remote","keyType":"thinQtv","subscribe":true}`: one channel at
+ * `startStreaming {"deviceId":"remote1","deviceType":"remote","keyType":"thinQtv"}` (not subscribed): one channel at
  * 16 kHz S16 LE, and starting it switches the remote's microphone on (its LED lights) without a key held. The remote is
  * listed by getDevices only while it is connected. `restartTimer` and `stopStreaming` take `{ id }`.
  *
@@ -186,12 +186,8 @@ class Mic {
     const stream = { proc: null, sock: null, output };
     this.stream = stream;
     this.rest = Buffer.alloc(0);
-    // sound1 <-> sound2 restarts concern the tv microphone only; for the remote a changing list would cut a command short.
-    if (this.source !== 'remote') this.followDevices();
-    const request = this.source === 'remote'
-      ? { deviceId: this.deviceId, deviceType: 'remote', keyType: 'thinQtv', subscribe: true }
-      : { id: 'internal1', subscribe: true };
-    stream.proc = spawn(this.lunaSend, ['-i', 'luna://' + VOICE + 'startStreaming', JSON.stringify(request)],
+    this.followDevices();
+    stream.proc = spawn(this.lunaSend, ['-i', 'luna://' + VOICE + 'startStreaming', JSON.stringify({ id: 'internal1', subscribe: true })],
       { stdio: ['ignore', 'pipe', 'ignore'] });
     const json = new JsonStream((j) => {
       if (this.stream !== stream) return;
